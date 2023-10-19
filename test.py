@@ -8,7 +8,7 @@ FPS = 60
 DISPLAY_SIZE = (1280, 720)  # use the user setting to define this
 NATIVE_RESOLUTION = (320, 180)
 PNG_DIR = "assets/png"
-PNG_LIST = []
+PNG_DICT = {}
 
 ###########
 # PG INIT #
@@ -30,10 +30,13 @@ NATIVE_SURFACE = pg.Surface(NATIVE_RESOLUTION)
 # PNG -> SURFS #
 ################
 for filename in os.listdir(PNG_DIR):
-    # get all pngs (this game is small)
+    # Get all pngs (this game is small)
     RELATIVE_PATH = os.path.join(PNG_DIR, filename)
     SURFACE = pg.image.load(RELATIVE_PATH)
-    PNG_LIST.append(SURFACE)
+
+    # key = filename (without extension) | val = surface
+    key = os.path.splitext(filename)[0]
+    PNG_DICT[key] = SURFACE
 
 
 ##########
@@ -287,7 +290,7 @@ class PlayerExhaustFlame(pg.sprite.Sprite):
         ##############   
         # PROPERTIES #
         ##############
-        self.Sprite = Sprite(surface=PNG_LIST[1], h_frame=3, v_frame=1)
+        self.Sprite = Sprite(surface=PNG_DICT["player_exhaust"], h_frame=3, v_frame=1)
         self.image = self.Sprite.image
         self.rect = self.Sprite.rect
 
@@ -337,9 +340,12 @@ class Player(pg.sprite.Sprite):
         ##############   
         # PROPERTIES #
         ##############
-        self.Sprite = Sprite(surface=PNG_LIST[0], h_frame=11, v_frame=1)
+        self.Sprite = Sprite(surface=PNG_DICT["player"], h_frame=11, v_frame=1)
         self.image = self.Sprite.image
         self.rect = self.Sprite.rect
+
+        # initial sprite frame (5 = no banking)
+        self.Sprite.frame = 5
 
         # children (create a list to iter each children later)
         self.ExhaustFlame = PlayerExhaustFlame()
@@ -350,12 +356,6 @@ class Player(pg.sprite.Sprite):
         self.MOVEMENT_WEIGHT = 0.1
         self.velocity = pg.math.Vector2(0, 0)
         self.remainder = pg.math.Vector2(0, 0)
-
-        # banking frame limiter
-        self.frame_limiter = 0
-
-        # init
-        self.Sprite.frame = 5
 
     ###########
     # METHODS #
@@ -386,14 +386,14 @@ class Player(pg.sprite.Sprite):
             self.velocity.normalize()
 
         # update frame index with velocity (100% to 5%, then shift by 5 frames)
-        self.Sprite.frame = int((self.velocity.x / self.MAX_VELOCITY * 100) / 17) + 5
+        self.Sprite.frame = int((self.velocity.x / self.MAX_VELOCITY * 100.0) / 17.0) + 5
         
         # update position with velocity
         # https://www.reddit.com/r/pygame/comments/q8whz6/why_is_my_movement_faster_in_some_directions_then/
         self.move_x(self.velocity.x * delta)
         self.move_y(self.velocity.y * delta)
 
-        # update children
+        # update children (position, animation, etc)
         self.ExhaustFlame.update(delta, self.rect)
     
     ##########
@@ -452,10 +452,9 @@ class Test:
 
         # layers (can do quadtree collision AABB!)
         self.DrawnLayer = Group()  # for things that needs to be drawn
-
         self.UpdateLayer = Group()  # for things that needs to be updated
 
-        # fill layers
+        # fill layers (order matters, top = drawn most bottom)
         self.DrawnLayer.add(self.Player.ExhaustFlame)
         self.DrawnLayer.add(self.Player)
         self.UpdateLayer.add(self.Player)
@@ -483,7 +482,7 @@ scene = Test()
 #############
 while is_running:
     # 60 FPS LIMIT
-    delta = CLOCK.tick(FPS) / 1000
+    delta = CLOCK.tick(FPS) / 1000.0
 
     # EVENTS
     for event in pg.event.get():
