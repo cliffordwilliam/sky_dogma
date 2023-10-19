@@ -5,7 +5,8 @@ import os
 # GLOBAL CONST #
 ################
 FPS = 60
-DISPLAY_SIZE = (320, 180)
+DISPLAY_SIZE = (1280, 720)  # use the user setting to define this
+NATIVE_RESOLUTION = (320, 180)
 PNG_DIR = "assets/png"
 PNG_LIST = []
 
@@ -17,6 +18,13 @@ DISPLAY_SURFACE = pg.display.set_mode(DISPLAY_SIZE)
 CLOCK = pg.time.Clock()
 
 is_running = True
+
+##########
+# CANVAS #
+##########
+# BLIT HERE, THEN BLIT THIS TO DISPLAY_SURFACE
+NATIVE_SURFACE = pg.Surface(NATIVE_RESOLUTION)
+
 
 ################
 # PNG -> SURFS #
@@ -259,11 +267,11 @@ class Sprite(pg.sprite.Sprite):
     ###########
     def draw(self):
         """
-        Frame property uses the frame data to determine what part of the sprite should it blit to DISPLAY_SURFACE.
+        Frame property uses the frame data to determine what part of the sprite should it blit to NATIVE_SURFACE.
         """
         frame_x, frame_y, frame_width, frame_height = self.frame_data[self.frame]
         frame_rect = pg.Rect(frame_x, frame_y, frame_width, frame_height)
-        DISPLAY_SURFACE.blit(self.image, self.rect, frame_rect)
+        NATIVE_SURFACE.blit(self.image, self.rect, frame_rect)
 
 
 ##########
@@ -443,13 +451,13 @@ class Test:
         self.Player = Player()
 
         # layers (can do quadtree collision AABB!)
-        self.DrawnLayer1 = Group()  # for things that needs to be drawn
+        self.DrawnLayer = Group()  # for things that needs to be drawn
 
         self.UpdateLayer = Group()  # for things that needs to be updated
 
         # fill layers
-        self.DrawnLayer1.add(self.Player.ExhaustFlame)
-        self.DrawnLayer1.add(self.Player)
+        self.DrawnLayer.add(self.Player.ExhaustFlame)
+        self.DrawnLayer.add(self.Player)
         self.UpdateLayer.add(self.Player)
     
     ###########
@@ -465,7 +473,7 @@ class Test:
         """
         DrawnLayers call its members update func. Order matters
         """
-        self.DrawnLayer1.draw()
+        self.DrawnLayer.draw()
 
 # create scenes
 scene = Test()
@@ -486,13 +494,18 @@ while is_running:
         Input.update(event)
     
     # CLEAR
-    DISPLAY_SURFACE.fill("blue4")
+    NATIVE_SURFACE.fill("blue4")
 
     # UPDATE
     scene.update(delta)
 
     # DRAW
     scene.draw()
+
+    # BLIT NATIVE TO DISPLAY
+    SCALED_NATIVE_SURFACE = pg.transform.scale(NATIVE_SURFACE, DISPLAY_SIZE)
+    DISPLAY_SURFACE.blit(SCALED_NATIVE_SURFACE, (0, 0))
+
 
     # UPDATE DISPLAY SURF TO SCREEN
     pg.display.flip()
