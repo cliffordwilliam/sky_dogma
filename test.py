@@ -1,74 +1,134 @@
 import pygame as pg  # https://pyga.me/docs/
 import os
 
-# const
+################
+# GLOBAL CONST #
+################
 FPS = 60
 DISPLAY_SIZE = (320, 180)
 PNG_DIR = "assets/png"
 PNG_LIST = []
 
+###########
+# PG INIT #
+###########
 pg.init()
 DISPLAY_SURFACE = pg.display.set_mode(DISPLAY_SIZE)
 CLOCK = pg.time.Clock()
 
 is_running = True
 
+################
+# PNG -> SURFS #
+################
+for filename in os.listdir(PNG_DIR):
+    # get all pngs (this game is small)
+    RELATIVE_PATH = os.path.join(PNG_DIR, filename)
+    SURFACE = pg.image.load(RELATIVE_PATH)
+    PNG_LIST.append(SURFACE)
+
+
 ##########
 # HELPER #
 ##########
-
-def lerp(start:float, end:float, weight:float):
+def lerp(start: float, end: float, weight: float):
+    """
+    Linear interpolation.
+    """
     out = start + (end - start) * weight
     if abs(out) < 1:
         out = 0
     return out
 
-def Sign(x):
-    if x > 0:
+def Sign(value):
+    """
+    Return value sign.
+    """
+    if value > 0:
         return 1
-    elif x < 0:
+    elif value < 0:
         return -1
     else:
         return 0
 
+########
+# MISC #
+########
+class Input:
+    """
+    For all Input queries necessity.
+    """
+    def __init__(self):
+        ##############
+        # PROPERTIES #
+        ##############
+        self.key_states = {}  # key: event.key | val: bool
+    
+    ###########
+    # METHODS #
+    ###########
+    def update(self, event):
+        """
+        Update the key_states dict with given event.
+        """
+        if event.type == pg.KEYDOWN:
+            self.key_states[event.key] = True
+        elif event.type == pg.KEYUP:
+            self.key_states[event.key] = False
+    
+    def is_action_pressed(self, key):
+        """
+        Return bool for held given key, expects key = pg.K_DOWN.
+        """
+        return self.key_states.get(key, False)
+    
+    def is_action_just_pressed(self, key):
+        """
+        Return bool for given key change state from not pressed to pressed, expects key = pg.K_DOWN.
+        """
+        return self.is_key_pressed(key) and not self.key_states.get(key, False)
 
-# get all pngs (this game is small)
-for filename in os.listdir(PNG_DIR):
-    RELATIVE_PATH = os.path.join(PNG_DIR, filename)
-    SURFACE = pg.image.load(RELATIVE_PATH)
-    PNG_LIST.append(SURFACE)
 
-# make layer obj
+# global class for input queries
+Input = Input()
+
+
+# for rendering & collision
 class Group(pg.sprite.Group):
-
+    """
+    Can act both as rendering and collision layer. Add entities in here.
+    """
+    ###########
+    # METHODS #
+    ###########
     def draw(self):
         """
-        Override the default draw method to instead call the actor draw method
+        Override the default draw method to instead call the actor draw method, 
+        actor draw method needs the frame index data to draw certain section of their spritesheet.
         """
         for spr in self.sprites():
             spr.draw()
 
-# layers (can do quadtree collision AABB!)
-DrawnLayer = Group()  # anything that needs to be updated & drawn goes here
-
-# building blocks
+#########
+# NODES #
+#########
 class Animator:
+    """
+    Able to change given target properties, following given keyframes data = list of tuples.
+    """
     def __init__(self):
-
-        ##############   
-        # properties #
         ##############
-
+        # PROPERTIES #
+        ##############
         self.animations = {}
         self.current_animation = None
         self.keyframe_index = 0
         self.elapsed_frame = 0
         self.listeners = {}  # key = event name | val = list of listeners
 
-    ###########    
-    # methods #
     ###########
-
+    # METHODS #
+    ###########
     def add_animation(
             self, 
             name: str, 
@@ -76,7 +136,10 @@ class Animator:
             keyframes: list[tuple[int, any]], 
             property_name: str, 
             is_looping: bool = False
-            ) -> None:
+            ):
+        """
+        Expects keyframes = [(frame, value)]. Value of given property.
+        """
         
         self.animations[name] = {
             'target': target, 
@@ -89,17 +152,21 @@ class Animator:
             self, 
             name: str
             ):
+        """
+        Updates current_animation.
+        """
         
         if name in self.animations:
             self.current_animation = name
-            self.keyframe_index = 0
-            self.elapsed_frame = 0
     
     def connect(
             self,
             event_name: str,
             method,
             ):
+        """
+        Pass in what you want to listen and the callback to be invoked.
+        """
         
         # already have some listeners? add more listeners
         if event_name in self.listeners:
@@ -110,6 +177,11 @@ class Animator:
 
     # needs to be called!
     def update(self):
+        """
+        Needs to be called, updates the elapsed_frame. Which is used to set attribute and make events happen.
+        """
+
+        # no current animation? return
         if not self.current_animation:
             return
         
@@ -131,19 +203,24 @@ class Animator:
                 # TODO: have a callback check here (play sound at frame 5)
                 setattr(target, property_name, keyframes[self.keyframe_index][1])
 
+        # keyframe at last index?
         else:
+            # looping? reset to 1st frame, reset elapsed frame counter too
             if is_looping:
                 self.keyframe_index = -1
                 self.elapsed_frame = -1
+            # not looping? animation_finished event happens now
             else:
                 self.animation_finished()  # fire event
 
     ##########
-    # events #
+    # EVENTS #
     ##########
-
     def animation_finished(self):
-        # no listeners? quit
+        """
+        Happens when any animation is finished (not looping ones only).
+        """
+        # no listeners? return
         if not "animation_finished" in self.listeners:
             return
         
@@ -153,8 +230,15 @@ class Animator:
 
 
 class Sprite(pg.sprite.Sprite):
+    """
+    Takes a spritesheet and uses it to create a frame data.
+    Change the frame property to change which sprite is drawn.
+    """
     def __init__(self, surface, h_frame: int, v_frame: int):
         super().__init__()
+        ##############
+        # PROPERTIES #
+        ##############
         self.image = surface
         self.rect = surface.get_rect()
         self.frame = 0
@@ -169,142 +253,117 @@ class Sprite(pg.sprite.Sprite):
                 frame_x = col * frame_width
                 frame_y = row * frame_height
                 self.frame_data[len(self.frame_data)] = (frame_x, frame_y, frame_width, frame_height)
-        
+    
+    ###########
+    # METHODS #
+    ###########
     def draw(self):
+        """
+        Frame property uses the frame data to determine what part of the sprite should it blit to DISPLAY_SURFACE.
+        """
         frame_x, frame_y, frame_width, frame_height = self.frame_data[self.frame]
         frame_rect = pg.Rect(frame_x, frame_y, frame_width, frame_height)
         DISPLAY_SURFACE.blit(self.image, self.rect, frame_rect)
 
 
-class Input:
-    def __init__(self) -> None:
-        self.key_states = {}  # key: event.key | val: bool
-    
-    def update(self, event):
-        # update key states dict
-        if event.type == pg.KEYDOWN:
-            self.key_states[event.key] = True
-        elif event.type == pg.KEYUP:
-            self.key_states[event.key] = False
-    
-    def is_action_pressed(self, key):
-        # key = pg.K_DOWN
-        return self.key_states.get(key, False)
-    
-    def is_action_just_pressed(self, key):
-        # key = pg.K_DOWN
-        return self.is_key_pressed(key) and not self.key_states.get(key, False)
-
-# global class for input queries
-Input = Input()
-
-
-# player
-class Player(pg.sprite.Sprite):
+##########
+# ACTORS #
+##########
+class PlayerExhaustFlame(pg.sprite.Sprite):
+    """
+    This is always a child of someone. Autoplays its burning animation. 
+    (Maybe has other anim in future).
+    """
     def __init__(self):
-
+        super().__init__()
         ##############   
         # PROPERTIES #
         ##############
+        self.Sprite = Sprite(surface=PNG_LIST[1], h_frame=3, v_frame=1)
+        self.image = self.Sprite.image
+        self.rect = self.Sprite.rect
 
-        super().__init__()
-        self.sprite = Sprite(surface=PNG_LIST[1], h_frame=5, v_frame=2)
-        self.image = self.sprite.image
-        self.rect = self.sprite.rect
+        self.local_position = pg.Vector2(0, 0)
 
-        # init animations
+        # animation
         self.animator = Animator()
-        # idle animation
         self.animator.add_animation(
-            name="idle",
-            target=self.sprite,
-            keyframes=[
-                (0, 4),
-                (3, 5),
-                (6, 4),
-            ],
+            name="default",
+            target=self.Sprite,
+             keyframes=[
+                 (0, 0),
+                 (2, 1),
+                 (4, 2),
+                 (6, 0),
+             ],
             property_name="frame",
-            is_looping=True
+             is_looping=True
         )
+        self.animator.play("default")
 
-        # left banking transition animation
-        self.animator.add_animation(
-            name="to_left_idle_from_idle",
-            target=self.sprite,
-            keyframes=[
-                (0, 2),
-                (3, 3),
-            ],
-            property_name="frame"
-        )
+    ###########
+    # METHODS #
+    ###########
+    def draw(self):
+        """
+        This func is called by the parent.
+        """
+        self.Sprite.draw()
+    
+    def update(self, delta, parent_rect):
+        """
+        Updates animation and position.
+        """
+        self.animator.update()
+        self.rect.x = parent_rect.x + self.local_position.x
+        self.rect.y = parent_rect.y + self.local_position.y
 
-        # left banking idle animation
-        self.animator.add_animation(
-            name="left_idle",
-            target=self.sprite,
-            keyframes=[
-                (0, 0),
-                (3, 1),
-                (6, 0),
-            ],
-            property_name="frame",
-            is_looping=True
-        )
 
-        # right banking transition animation
-        self.animator.add_animation(
-            name="to_right_idle_from_idle",
-            target=self.sprite,
-            keyframes=[
-                (0, 6),
-                (3, 7),
-            ],
-            property_name="frame"
-        )
+class Player(pg.sprite.Sprite):
+    """
+    Listens to user input and updates it's position.
+    Has Sprite that is updated based on it's velocity.x
+    """
+    def __init__(self):
+        super().__init__()
+        ##############   
+        # PROPERTIES #
+        ##############
+        self.Sprite = Sprite(surface=PNG_LIST[0], h_frame=11, v_frame=1)
+        self.image = self.Sprite.image
+        self.rect = self.Sprite.rect
 
-        # right banking idle animation
-        self.animator.add_animation(
-            name="right_idle",
-            target=self.sprite,
-            keyframes=[
-                (0, 8),
-                (3, 9),
-                (6, 8),
-            ],
-            property_name="frame",
-            is_looping=True
-        )
-
-        # connect animation finished signal
-        self.animator.connect("animation_finished", self.on_animator_animation_finished)
-
-        # state - start at 0
-        self.set_state(0)
+        # children (create a list to iter each children later)
+        self.ExhaustFlame = PlayerExhaustFlame()
+        self.ExhaustFlame.local_position.y = 15.0
 
         # movement
-        self.velocity = pg.math.Vector2(0, 0)
         self.MAX_VELOCITY = 90.0  # px / s
         self.MOVEMENT_WEIGHT = 0.1
-        self.remainder_x = 0
-        self.remainder_y = 0
+        self.velocity = pg.math.Vector2(0, 0)
+        self.remainder = pg.math.Vector2(0, 0)
 
-    #############
-    # CALLBACKS #
-    #############
+        # banking frame limiter
+        self.frame_limiter = 0
 
-    # handle transition animations
-    def on_animator_animation_finished(self, animation_name):
-        if animation_name == "to_left_idle_from_idle":
-            self.animator.play("left_idle")
-        elif animation_name == "to_right_idle_from_idle":
-            self.animator.play("right_idle")
+        # init
+        self.Sprite.frame = 5
 
+    ###########
+    # METHODS #
+    ###########
     def draw(self):
-        self.sprite.draw()
+        """
+        This func is called by the Group class. 
+        Call sprite objects draw functions here.
+        """
+        self.Sprite.draw()
     
     def update(self, delta):
-        self.animator.update()
-
+        """
+        Updates anything here based on user input / other actor influences.
+        """
+        # direction
         direction = pg.math.Vector2(
             Input.is_action_pressed(pg.K_RIGHT) - Input.is_action_pressed(pg.K_LEFT), 
             Input.is_action_pressed(pg.K_DOWN) - Input.is_action_pressed(pg.K_UP)
@@ -312,92 +371,38 @@ class Player(pg.sprite.Sprite):
         if direction.x or direction.y:
             direction.normalize()
 
-        ##########
-        # STATES #
-        ##########
+        # update velocity with direction
+        self.velocity.y = lerp(self.velocity.y, self.MAX_VELOCITY * direction.y, self.MOVEMENT_WEIGHT)
+        self.velocity.x = lerp(self.velocity.x, self.MAX_VELOCITY * direction.x, self.MOVEMENT_WEIGHT)
+        if self.velocity.x or self.velocity.y:
+            self.velocity.normalize()
 
-        # idle
-        if self.state == 0:
-            # ACTION
-            # acc / decel horizontally
-            self.velocity.y = lerp(self.velocity.y, self.MAX_VELOCITY * direction.y, self.MOVEMENT_WEIGHT)
-            # acc / decel vertically
-            self.velocity.x = lerp(self.velocity.x, self.MAX_VELOCITY * direction.x, self.MOVEMENT_WEIGHT)
-            if self.velocity.x or self.velocity.y:
-                self.velocity.normalize()
-            
-            # update position (https://www.reddit.com/r/pygame/comments/q8whz6/why_is_my_movement_faster_in_some_directions_then/)
-            self.move_x(self.velocity.x * delta)
-            self.move_y(self.velocity.y * delta)
+        # update frame index with velocity (100% to 5%, then shift by 5 frames)
+        self.Sprite.frame = int((self.velocity.x / self.MAX_VELOCITY * 100) / 17) + 5
+        
+        # update position with velocity
+        # https://www.reddit.com/r/pygame/comments/q8whz6/why_is_my_movement_faster_in_some_directions_then/
+        self.move_x(self.velocity.x * delta)
+        self.move_y(self.velocity.y * delta)
 
-            # EXIT
-            # to idle left
-            if direction[0] == -1:
-                self.set_state(1)
-            # to idle right
-            elif direction[0] == 1:
-                self.set_state(2)
-
-        # left
-        elif self.state == 1:
-            # ACTION
-            # acc / decel horizontally
-            self.velocity.y = lerp(self.velocity.y, self.MAX_VELOCITY * direction.y, self.MOVEMENT_WEIGHT)
-            # acc / decel vertically
-            self.velocity.x = lerp(self.velocity.x, self.MAX_VELOCITY * direction.x, self.MOVEMENT_WEIGHT)
-            if self.velocity.x or self.velocity.y:
-                self.velocity.normalize()
-            
-            # update position (https://www.reddit.com/r/pygame/comments/q8whz6/why_is_my_movement_faster_in_some_directions_then/)
-            self.move_x(self.velocity.x * delta)
-            self.move_y(self.velocity.y * delta)
-
-            # move left
-            # EXIT
-            # to idle
-            if not direction[0]:
-                self.set_state(0)
-            # to idle right
-            elif direction[0] == 1:
-                self.set_state(2)
-
-        # right
-        elif self.state == 2:
-            # ACTION
-            # acc / decel horizontally
-            self.velocity.y = lerp(self.velocity.y, self.MAX_VELOCITY * direction.y, self.MOVEMENT_WEIGHT)
-            # acc / decel vertically
-            self.velocity.x = lerp(self.velocity.x, self.MAX_VELOCITY * direction.x, self.MOVEMENT_WEIGHT)
-            if self.velocity.x or self.velocity.y:
-                self.velocity.normalize()
-            
-            # update position (https://www.reddit.com/r/pygame/comments/q8whz6/why_is_my_movement_faster_in_some_directions_then/)
-            self.move_x(self.velocity.x * delta)
-            self.move_y(self.velocity.y * delta)
-
-
-            # move right
-            # EXIT
-            # to idle
-            if not direction[0]:
-                self.set_state(0)
-            # to idle left
-            elif direction[0] == -1:
-                self.set_state(1)
+        # update children
+        self.ExhaustFlame.update(delta, self.rect)
     
     ##########
     # HELPER #
     ##########
-
     # https://maddythorson.medium.com/celeste-and-towerfall-physics-d24bd2ae0fc5
     def move_x(self, amount: float):
-        self.remainder_x += amount
-        move = round(self.remainder_x)
+        """
+        Position updates with int, so collect the lost decimals and adds it to distance to be covered.
+        """
+        self.remainder.x += amount
+        move = round(self.remainder.x)
 
         if move == 0:
             return
         
-        self.remainder_x -= move
+        self.remainder.x -= move
         sign = Sign(move)
 
         while move != 0:
@@ -407,70 +412,67 @@ class Player(pg.sprite.Sprite):
 
     # https://maddythorson.medium.com/celeste-and-towerfall-physics-d24bd2ae0fc5
     def move_y(self, amount: float):
-        self.remainder_y += amount
-        move = round(self.remainder_y)
+        """
+        Position updates with int, so collect the lost decimals and adds it to distance to be covered.
+        """
+        self.remainder.y += amount
+        move = round(self.remainder.y)
 
         if move == 0:
             return
         
-        self.remainder_y -= move
+        self.remainder.y -= move
         sign = Sign(move)
 
         while move != 0:
             # check collision here, break if collided
             self.rect.y += sign
             move -= sign
+
+##########
+# SCENES #
+##########
+class Test:
+    """
+    Testing scene only.
+    """
+    def __init__(self):
+        ############
+        # CHILDREN #
+        ############
+        self.Player = Player()
+
+        # layers (can do quadtree collision AABB!)
+        self.DrawnLayer1 = Group()  # for things that needs to be drawn
+
+        self.UpdateLayer = Group()  # for things that needs to be updated
+
+        # fill layers
+        self.DrawnLayer1.add(self.Player.ExhaustFlame)
+        self.DrawnLayer1.add(self.Player)
+        self.UpdateLayer.add(self.Player)
     
+    ###########
+    # METHODS #
+    ###########
+    def update(self, delta):
+        """
+        UpdateLayer call its members update func.
+        """
+        self.UpdateLayer.update(delta)
+    
+    def draw(self):
+        """
+        DrawnLayers call its members update func. Order matters
+        """
+        self.DrawnLayer1.draw()
 
-    ##########
-    # GETTER #
-    ##########
-
-    def set_state(self, value):
-        old_state = value
-        self.state = value
-
-        ########
-        # EXIT #
-        ########
-
-        # from idle
-        if old_state == 0:
-            pass
-        
-        # from left
-        if old_state == 1:
-            pass
-        
-        # from right
-        if old_state == 2:
-            pass
-        
-        #########
-        # ENTER #
-        #########
-        
-        # to idle
-        if self.state == 0:
-            self.animator.play("idle")
-
-        # to left
-        if self.state == 1:
-            self.animator.play("to_left_idle_from_idle")
-
-        # to right
-        if self.state == 2:
-            self.animator.play("to_right_idle_from_idle")
-
-
-# player
-player = Player()
-DrawnLayer.add(player)
+# create scenes
+scene = Test()
 
 #############
 # MAIN LOOP #
 #############
-
 while is_running:
     # 60 FPS LIMIT
     delta = CLOCK.tick(FPS) / 1000
@@ -484,13 +486,13 @@ while is_running:
         Input.update(event)
     
     # CLEAR
-    DISPLAY_SURFACE.fill("black")
+    DISPLAY_SURFACE.fill("blue4")
 
     # UPDATE
-    DrawnLayer.update(delta)
+    scene.update(delta)
 
     # DRAW
-    DrawnLayer.draw()
+    scene.draw()
 
     # UPDATE DISPLAY SURF TO SCREEN
     pg.display.flip()
