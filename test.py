@@ -15,10 +15,21 @@ DISPLAY_SIZE = (1280, 720)  # use the user setting to define this
 NATIVE_RESOLUTION = (320, 180)
 HALF_NATIVE_RESOLUTION = (160, 90)
 PNG_DIR = "assets/png"
+TTF_DIR_TO_FILE = "assets/ttf/CG_pixel_3x5_mono.ttf"  # 1 font for this game
+FONT_SIZE = 5  # 1 font for this game
 SURFACES_DICT = {}
 BACKGROUND_WIDTH = 336
 HALF_BACKGROUND_WIDTH = 168
 ONE_TILE = 16
+DEBUG_KEY = pg.K_d
+DEBUG_KEY_IN_GAME = pg.K_e
+
+
+#########
+# DEBUG #
+#########
+is_debug = False
+is_debug_in_game = False  # in game has bg wider than native width
 
 
 ###########
@@ -27,6 +38,7 @@ ONE_TILE = 16
 pg.init()
 DISPLAY_SURFACE = pg.display.set_mode(DISPLAY_SIZE)
 CLOCK = pg.time.Clock()
+
 
 is_running = True
 
@@ -49,6 +61,12 @@ for filename in os.listdir(PNG_DIR):
     # key = filename (without extension) | val = surface
     key = os.path.splitext(filename)[0]
     SURFACES_DICT[key] = SURFACE
+
+
+########
+# FONT #
+########
+FONT = pg.font.Font(TTF_DIR_TO_FILE, FONT_SIZE)
 
 
 ##########
@@ -108,6 +126,7 @@ class Input:
         # PROPERTIES #
         ##############
         self.key_states = {}  # key: event.key | val: bool
+        self.was_pressed = False
     
     ###########
     # METHODS #
@@ -131,7 +150,11 @@ class Input:
         """
         Return bool for given key change state from not pressed to pressed, expects key = pg.K_DOWN.
         """
-        return self.is_key_pressed(key) and not self.key_states.get(key, False)
+        if self.was_pressed == True and self.is_action_pressed(key) == False:
+            self.was_pressed = False
+        if self.was_pressed == False and self.is_action_pressed(key) == True:
+            self.was_pressed = True
+            return True
 
 
 # global class for input queries
@@ -228,6 +251,7 @@ class Animator:
         self.keyframe_index = 0
         self.elapsed_frame = 0
         self.listeners = {}  # key = event name | val = list of listeners
+        self.is_stopped = False
 
     ###########
     # METHODS #
@@ -238,7 +262,8 @@ class Animator:
             target: any, 
             keyframes: list[tuple[int, any]], 
             property_name: str, 
-            is_looping: bool = False
+            is_looping: bool = False,
+            is_interpolate: bool = False
             ):
         """
         Expects keyframes = [(frame, value)]. Value of given property.
@@ -248,29 +273,32 @@ class Animator:
             'target': target, 
             'keyframes': keyframes, 
             'property_name': property_name,
-            'is_looping': is_looping
+            'is_looping': is_looping,
+            "is_interpolate": is_interpolate
         }
     
-    def play(
-            self, 
-            name: str
-            ):
+    def play(self, name: str):
         """
         Updates current_animation.
         """
-        
+        self.is_stopped = False
         if name in self.animations:
             self.current_animation = name
     
-    def connect(
-            self,
-            event_name: str,
-            method,
-            ):
+    def stop(self, is_reset=False):
+        """
+        stop current_animation.
+        """
+        self.is_stopped = not self.is_stopped
+        if is_reset:
+            self.keyframe_index = -1
+            self.elapsed_frame = -1
+
+    
+    def connect(self, event_name: str, method,):
         """
         Pass in what you want to listen and the callback to be invoked.
         """
-        
         # already have some listeners? add more listeners
         if event_name in self.listeners:
             self.listeners[event_name].append(method)
@@ -287,12 +315,17 @@ class Animator:
         if not self.current_animation:
             return
         
+        # stopped? paused?
+        if self.is_stopped:
+            return
+        
         # get data of current animation
         anim = self.animations[self.current_animation]
         target = anim['target']
         keyframes = anim['keyframes']
         property_name = anim['property_name']
         is_looping = anim['is_looping']
+        is_interpolate = anim['is_interpolate']
     
         # udapte elapsed frame
         self.elapsed_frame += 1
@@ -302,8 +335,17 @@ class Animator:
             # elapsed_frame now is == next keyframe frame item?
             if self.elapsed_frame == keyframes[self.keyframe_index + 1][0]:
                 self.keyframe_index += 1
-                # TODO: have a callback check here (play sound at frame 5)
+                # TODO: this is setting attribute track, create a call function attribute track (to play sound)
                 setattr(target, property_name, keyframes[self.keyframe_index][1])
+
+            # elapsed_frame now is HAVE NOT REACH next keyframe frame item?
+            else:
+                if is_interpolate:
+                    start_frame_index, start_value = keyframes[self.keyframe_index]
+                    end_frame_index, end_value = keyframes[self.keyframe_index + 1]
+                    weight = (self.elapsed_frame - start_frame_index) / (end_frame_index - start_frame_index)
+                    interpolated_value = lerp(start_value, end_value, weight)
+                    setattr(target, property_name, interpolated_value)
 
         # keyframe at last index?
         else:
@@ -314,13 +356,16 @@ class Animator:
             # not looping? animation_finished event happens now
             else:
                 self.animation_finished()  # fire event
+                self.current_animation = None
+                self.keyframe_index = -1
+                self.elapsed_frame = -1
 
     ##########
     # EVENTS #
     ##########
     def animation_finished(self):
         """
-        Happens when any animation is finished (not looping ones only).
+        Happens when any animation is finished (not looping ones only). THIS REUTNS THE ANIMATION NAME
         """
         # no listeners? return
         if not "animation_finished" in self.listeners:
@@ -345,6 +390,7 @@ class Sprite(pg.sprite.Sprite):
         self.rect = surface.get_rect()
         self.frame = 0
         self.frame_data = {}
+        self.alpha = 255  # has setget
 
         # set frame data
         self.frame_width = surface.get_width() // h_frame
@@ -376,6 +422,22 @@ class Sprite(pg.sprite.Sprite):
         )
 
         NATIVE_SURFACE.blit(self.image, on_camera_rect, frame_rect)
+        # DEBUG DRAW RECT
+        if is_debug or is_debug_in_game:
+            pg.draw.rect(NATIVE_SURFACE, (0, 255, 0), pg.Rect(self.rect.x - Cam.global_position.x, self.rect.y - Cam.global_position.y, frame_width, frame_height), 1)
+    
+    ###################
+    # SETTER / GETTER #
+    ###################
+    @property
+    def alpha(self):
+        return self._alpha
+
+    @alpha.setter
+    def alpha(self, value):
+        self._alpha = value
+        self.image.set_alpha(value)
+
 
 
 ##########
@@ -465,12 +527,12 @@ class PlayerShadow(pg.sprite.Sprite):
         ##############
 
         # pre process the surface, turn non transparent pixel to black
-        black_sprite_sheet_surface = apply_flash_shader(SURFACES_DICT["player"], color=(0, 0, 0, 255))
+        black_sprite_sheet_surface = apply_flash_shader(SURFACES_DICT["player"], color=(0, 0, 0, 112))
 
         # scale it down by 50%
         # TODO: have this scaling be configurable for animation (take off and landing)
-        half_width = black_sprite_sheet_surface.get_width() // 2
-        half_height = black_sprite_sheet_surface.get_height() // 2
+        half_width = 12 * 11
+        half_height = 12
         scaled_black_sprite_sheet_surface = pg.transform.scale(black_sprite_sheet_surface, (half_width, half_height))
 
         self.Sprite = Sprite(surface=scaled_black_sprite_sheet_surface, h_frame=11, v_frame=1)
@@ -515,8 +577,8 @@ class PlayerExhaustFlame(pg.sprite.Sprite):
         self.local_position = pg.Vector2(0, 0)
 
         # animation
-        self.animator = Animator()
-        self.animator.add_animation(
+        self.Animator = Animator()
+        self.Animator.add_animation(
             name="default",
             target=self.Sprite,
              keyframes=[
@@ -528,7 +590,7 @@ class PlayerExhaustFlame(pg.sprite.Sprite):
             property_name="frame",
              is_looping=True
         )
-        self.animator.play("default")
+        self.Animator.play("default")
 
     ###########
     # METHODS #
@@ -544,7 +606,7 @@ class PlayerExhaustFlame(pg.sprite.Sprite):
         This func is called by the parent.
         Updates animation and position.
         """
-        self.animator.update()
+        self.Animator.update()
         self.rect.x = parent_rect.x + self.local_position.x
         self.rect.y = parent_rect.y + self.local_position.y
 
@@ -574,8 +636,8 @@ class Player(pg.sprite.Sprite):
         self.ExhaustFlame.local_position.y = 15.0
         # shadow
         self.Shadow = PlayerShadow()
-        self.Shadow.local_position.y = 15.0
-        self.Shadow.local_position.x = 15.0
+        self.Shadow.local_position.y = 24.0
+        self.Shadow.local_position.x = 24.0
         # lists (drawing does not need any args)
         self.children = [
             self.ExhaustFlame,
@@ -654,6 +716,8 @@ class Player(pg.sprite.Sprite):
         while move != 0:
             # check collision here, break if collided
             self.rect.x += sign
+            # clamp x, keep player within background
+            self.rect.x = max(0, min(self.rect.x, BACKGROUND_WIDTH - 16))
             move -= sign
 
     # https://maddythorson.medium.com/celeste-and-towerfall-physics-d24bd2ae0fc5
@@ -673,17 +737,107 @@ class Player(pg.sprite.Sprite):
         while move != 0:
             # check collision here, break if collided
             self.rect.y += sign
+            # clamp y, keep player within background
+            self.rect.y = max(0, min(self.rect.y, NATIVE_RESOLUTION[1] - 16))
             move -= sign
 
 
 ##########
 # SCENES #
 ##########
+class SceneManager:
+    def __init__(self):
+        self.current_scene = None
+
+    def change_scene_to(self, new_scene):
+        self.current_scene = new_scene
+
+# create sceneManager
+SceneManager = SceneManager()
+
+
+class PauseMenu:
+    """
+    THIS SCENE IS ALWAYS PRESENT.
+    It visually appears when the game is paused, this class listens for the paused button
+    This class flips the is_paused flag on and off
+    """
+    def __init__(self):
+
+        ############
+        # CHILDREN #
+        ############
+        # SETUP BACKGROUND
+        background_surface = pg.Surface((BACKGROUND_WIDTH, NATIVE_RESOLUTION[1]))  # create surf
+        background_surface.fill((0, 0, 0))  # black color
+        self.Background = Sprite(background_surface, 1, 1)  # create it as sprite
+        self.Background.alpha = 0  # alpha 0 at start (to fade in)
+
+        # layers (can do quadtree collision AABB!)
+        self.DrawnLayer = Group()  # for things that needs to be drawn
+        self.UpdateLayer = Group()  # for things that needs to be updated
+
+        # fill draw layers (order matters, top = drawn most bottom)
+        self.DrawnLayer.add(self.Background)
+
+        ##############
+        # PROPERTIES #
+        ##############
+        self.is_paused = False  # gameplay scenes update method if guard
+        self.is_in_gameplay = False  # pause scene update method if guard
+    
+    ###########
+    # METHODS #
+    ###########
+    def update(self, delta):
+        """
+        Flip the pause flag.
+        """
+
+        # ONLY DURING GAMEPLAY SCENES CAN PAUSE HAPPEN
+        # TOOD: make a flag for is_in_game
+        # WHEN PAUSED, THIS AUTOLOAD PAUSE SCENE IS ACTIVATED
+        if Input.is_action_just_pressed(pg.K_ESCAPE) and self.is_in_gameplay:
+            self.is_paused = not self.is_paused
+    
+    def draw(self):
+        """
+        DrawnLayers call its members update func. Order matters
+        """
+        self.DrawnLayer.draw()
+    
+    ###################
+    # SETTER / GETTER #
+    ###################
+    @property
+    def is_paused(self):
+        return self._is_paused
+    # called when the prop is changed
+    @is_paused.setter
+    def is_paused(self, value):
+        self._is_paused = value
+        # paused?
+        if self.is_paused:
+            # TODO: animate this from 0 to 50% opacity
+            self.Background.alpha = 122
+        # not paused?
+        else:
+            # TODO: animate this from 50% to 0% opacity
+            self.Background.alpha = 0
+
+
+PauseMenu = PauseMenu()
+
+
 class Test:
     """
     Testing scene only.
+    Add actors and whatever here
     """
     def __init__(self):
+        # update pause is gameplay if guard
+        PauseMenu.is_in_gameplay = True
+
         ############
         # CHILDREN #
         ############
@@ -724,6 +878,12 @@ class Test:
         """
         UpdateLayer call its members update func.
         """
+
+        # ONLY GAMEPLAY SCENES CAN BE PAUSED
+        # WHEN PAUSED, THE AUTOLOAD PAUSE SCENE IS ACTIVATED
+        if PauseMenu.is_paused:
+            return
+        
         self.UpdateLayer.update(delta)
     
     def draw(self):
@@ -732,8 +892,456 @@ class Test:
         """
         self.DrawnLayer.draw()
 
-# create scenes
-scene = Test()
+
+class MadeBySplash:
+    """
+    First Scene. Shows my name
+    """
+    def __init__(self):
+        # update pause is gameplay if guard
+        PauseMenu.is_in_gameplay = False
+        
+        ##############
+        # PROPERTIES #
+        ##############
+        self.is_skipped = False
+
+        ############
+        # CHILDREN #
+        ############
+        # SETUP BACKGROUND
+        background_surface = pg.Surface(NATIVE_RESOLUTION)  # create surf
+        background_surface.fill((0, 0, 0))  # black color
+        self.Background = Sprite(background_surface, 1, 1)  # create it as sprite
+
+        # SETUP CURTAIN (FOR WHEN PLAYER SKIPS THIS SCENE)
+        curtain_surface = pg.Surface(NATIVE_RESOLUTION)  # create surf
+        curtain_surface.fill((0, 0, 0))  # black color
+        self.Curtain = Sprite(curtain_surface, 1, 1)  # create it as sprite
+        self.Curtain.alpha = 0  # alpha 0 at start (to fade in)
+
+        # SETUP LABEL - Made by Clifford
+        made_by_text_surface = FONT.render("made by clifford", False, (255, 255, 255))  # create surf
+        self.MadeByText = Sprite(made_by_text_surface, 1, 1)  # create it as sprite
+        self.MadeByText.rect.center = pg.Vector2(HALF_NATIVE_RESOLUTION[0], HALF_NATIVE_RESOLUTION[1])  # position it
+        self.MadeByText.alpha = 0  # alpha 0 at start (to fade in)
+
+        # SETUP LABEL - Press Any Key to Skip
+        press_any_text_surface = FONT.render("press any key to skip", False, (255, 255, 255))  # create surf
+        self.PressAnyText = Sprite(press_any_text_surface, 1, 1)  # create it as sprite
+        self.PressAnyText.rect.bottomright = pg.Vector2(NATIVE_RESOLUTION[0] - ONE_TILE, NATIVE_RESOLUTION[1] - ONE_TILE)  # position it
+        self.PressAnyText.alpha = 0  # alpha 0 at start (to fade in)
+
+        # LABEL ANIMATOR - Made by Clifford
+        self.MadeByTextAnimator = Animator()  # create animator
+        self.MadeByTextAnimator.connect("animation_finished", self.on_MadeByTextAnimator_animation_finished)  # connect finished animation signal
+        # fade in animation
+        self.MadeByTextAnimator.add_animation(
+            name="fade_in_out",
+            target=self.MadeByText,
+             keyframes=[
+                 (0, 0),
+                 (60, 0),
+                 (120, 255),
+                 (180, 255),
+                 (240, 0),
+                 (300, 0),
+             ],
+            property_name="alpha",
+            is_looping=False,
+            is_interpolate=True
+        )
+        # autoplay the fade in
+        self.MadeByTextAnimator.play("fade_in_out")
+
+        # LABEL ANIMATOR - Press Any Key
+        self.PressAnyTextAnimator = Animator()  # create animator
+        # fade in animation
+        self.PressAnyTextAnimator.add_animation(
+            name="fade_in_out",
+            target=self.PressAnyText,
+             keyframes=[
+                 (0, 0),
+                 (60, 0),
+                 (120, 255),
+                 (180, 255),
+                 (240, 0),
+                 (300, 0),
+             ],
+            property_name="alpha",
+            is_looping=False,
+            is_interpolate=True
+        )
+        # autoplay the fade in
+        self.PressAnyTextAnimator.play("fade_in_out")
+
+        # CURTAIN - fade in ANIMATOR
+        self.CurtainFadeAnimator = Animator()  # create animator
+        self.CurtainFadeAnimator.connect("animation_finished", self.on_CurtainFadeAnimator_animation_finished)  # connect finished animation signal
+        # fade in animation
+        self.CurtainFadeAnimator.add_animation(
+            name="fade_in",
+            target=self.Curtain,
+             keyframes=[
+                 (0, 0),
+                 (60, 255),
+             ],
+            property_name="alpha",
+            is_looping=False,
+            is_interpolate=True
+        )
+
+        # layers (can do quadtree collision AABB!)
+        self.DrawnLayer = Group()  # for things that needs to be drawn
+        self.UpdateLayer = Group()  # for things that needs to be updated
+
+        # fill draw layers (order matters, top = drawn most bottom)
+        self.DrawnLayer.add(self.Background)
+        self.DrawnLayer.add(self.MadeByText)
+        self.DrawnLayer.add(self.PressAnyText)
+        self.DrawnLayer.add(self.Curtain)
+
+        # fill update layers, anything that needs updating goes here
+        self.UpdateLayer.add()
+    
+    ############
+    # CALLBACK #
+    ############
+    def on_MadeByTextAnimator_animation_finished(self, animation_name):
+        SceneManager.change_scene_to(LanguageSplash())
+
+    def on_CurtainFadeAnimator_animation_finished(self, animation_name):
+        SceneManager.change_scene_to(LanguageSplash())
+    
+    ###########
+    # METHODS #
+    ###########
+    def update(self, delta):
+        """
+        UpdateLayer call its members update func. Update animator
+        """
+        # update UpdateLayer
+        self.UpdateLayer.update(delta)
+        
+        # update animators
+        self.MadeByTextAnimator.update()
+        self.PressAnyTextAnimator.update()
+        self.CurtainFadeAnimator.update()
+
+        # user pressed a key? play the curtain fade in anim
+        for key in Input.key_states:
+            if Input.key_states[key] == True and self.is_skipped == False:
+                self.is_skipped = True
+                self.MadeByTextAnimator.stop()
+                self.PressAnyTextAnimator.stop()
+                # play the curtain fade in animation
+                self.CurtainFadeAnimator.play("fade_in")  # this callback switch to LanguageSplash scene
+    
+    def draw(self):
+        """
+        DrawnLayers call its members update func. Order matters
+        """
+        self.DrawnLayer.draw()
+
+
+class LanguageSplash:
+    """
+    First Scene. Shows my name
+    """
+    def __init__(self):
+        # update pause is gameplay if guard
+        PauseMenu.is_in_gameplay = False
+        
+        ##############
+        # PROPERTIES #
+        ##############
+        self.is_skipped = False
+
+        ############
+        # CHILDREN #
+        ############
+        # SETUP BACKGROUND
+        background_surface = pg.Surface(NATIVE_RESOLUTION)  # create surf
+        background_surface.fill((0, 0, 0))  # black color
+        self.Background = Sprite(background_surface, 1, 1)  # create it as sprite
+
+        # SETUP CURTAIN (FOR WHEN PLAYER SKIPS THIS SCENE)
+        curtain_surface = pg.Surface(NATIVE_RESOLUTION)  # create surf
+        curtain_surface.fill((0, 0, 0))  # black color
+        self.Curtain = Sprite(curtain_surface, 1, 1)  # create it as sprite
+        self.Curtain.alpha = 0  # alpha 0 at start (to fade in)
+
+        # SETUP LABEL - Made by Clifford
+        made_by_text_surface = FONT.render("powered by python", False, (255, 255, 255))  # create surf
+        self.MadeByText = Sprite(made_by_text_surface, 1, 1)  # create it as sprite
+        self.MadeByText.rect.center = pg.Vector2(HALF_NATIVE_RESOLUTION[0], HALF_NATIVE_RESOLUTION[1])  # position it
+        self.MadeByText.alpha = 0  # alpha 0 at start (to fade in)
+
+        # SETUP LABEL - Press Any Key to Skip
+        press_any_text_surface = FONT.render("press any key to skip", False, (255, 255, 255))  # create surf
+        self.PressAnyText = Sprite(press_any_text_surface, 1, 1)  # create it as sprite
+        self.PressAnyText.rect.bottomright = pg.Vector2(NATIVE_RESOLUTION[0] - ONE_TILE, NATIVE_RESOLUTION[1] - ONE_TILE)  # position it
+        self.PressAnyText.alpha = 0  # alpha 0 at start (to fade in)
+
+        # LABEL ANIMATOR - Made by Clifford
+        self.MadeByTextAnimator = Animator()  # create animator
+        self.MadeByTextAnimator.connect("animation_finished", self.on_MadeByTextAnimator_animation_finished)  # connect finished animation signal
+        # fade in animation
+        self.MadeByTextAnimator.add_animation(
+            name="fade_in_out",
+            target=self.MadeByText,
+             keyframes=[
+                 (0, 0),
+                 (60, 0),
+                 (120, 255),
+                 (180, 255),
+                 (240, 0),
+                 (300, 0),
+             ],
+            property_name="alpha",
+            is_looping=False,
+            is_interpolate=True
+        )
+        # autoplay the fade in
+        self.MadeByTextAnimator.play("fade_in_out")
+
+        # LABEL ANIMATOR - Press Any Key
+        self.PressAnyTextAnimator = Animator()  # create animator
+        # fade in animation
+        self.PressAnyTextAnimator.add_animation(
+            name="fade_in_out",
+            target=self.PressAnyText,
+             keyframes=[
+                 (0, 0),
+                 (60, 0),
+                 (120, 255),
+                 (180, 255),
+                 (240, 0),
+                 (300, 0),
+             ],
+            property_name="alpha",
+            is_looping=False,
+            is_interpolate=True
+        )
+        # autoplay the fade in
+        self.PressAnyTextAnimator.play("fade_in_out")
+
+        # CURTAIN - fade in ANIMATOR
+        self.CurtainFadeAnimator = Animator()  # create animator
+        self.CurtainFadeAnimator.connect("animation_finished", self.on_CurtainFadeAnimator_animation_finished)  # connect finished animation signal
+        # fade in animation
+        self.CurtainFadeAnimator.add_animation(
+            name="fade_in",
+            target=self.Curtain,
+             keyframes=[
+                 (0, 0),
+                 (60, 255),
+             ],
+            property_name="alpha",
+            is_looping=False,
+            is_interpolate=True
+        )
+
+        # layers (can do quadtree collision AABB!)
+        self.DrawnLayer = Group()  # for things that needs to be drawn
+        self.UpdateLayer = Group()  # for things that needs to be updated
+
+        # fill draw layers (order matters, top = drawn most bottom)
+        self.DrawnLayer.add(self.Background)
+        self.DrawnLayer.add(self.MadeByText)
+        self.DrawnLayer.add(self.PressAnyText)
+        self.DrawnLayer.add(self.Curtain)
+
+        # fill update layers, anything that needs updating goes here
+        self.UpdateLayer.add()
+    
+    ############
+    # CALLBACK #
+    ############
+    def on_MadeByTextAnimator_animation_finished(self, animation_name):
+        SceneManager.change_scene_to(TitleScreen())
+
+    def on_CurtainFadeAnimator_animation_finished(self, animation_name):
+        SceneManager.change_scene_to(TitleScreen())
+    
+    ###########
+    # METHODS #
+    ###########
+    def update(self, delta):
+        """
+        UpdateLayer call its members update func. Update animator
+        """
+        # update UpdateLayer
+        self.UpdateLayer.update(delta)
+        
+        # update animators
+        self.MadeByTextAnimator.update()
+        self.PressAnyTextAnimator.update()
+        self.CurtainFadeAnimator.update()
+
+        # user pressed a key? play the curtain fade in anim
+        for key in Input.key_states:
+            if Input.key_states[key] == True and self.is_skipped == False:
+                self.is_skipped = True
+                self.MadeByTextAnimator.stop()
+                self.PressAnyTextAnimator.stop()
+                # play the curtain fade in animation
+                self.CurtainFadeAnimator.play("fade_in")  # this callback switch to LanguageSplash scene
+    
+    def draw(self):
+        """
+        DrawnLayers call its members update func. Order matters
+        """
+        self.DrawnLayer.draw()
+
+
+class TitleScreen:
+    """
+    Press any button screen
+    """
+    def __init__(self):
+        # update pause is gameplay if guard
+        PauseMenu.is_in_gameplay = False
+        
+        ##############
+        # PROPERTIES #
+        ##############
+        self.is_skipped = False
+
+        ############
+        # CHILDREN #
+        ############
+        # SETUP BACKGROUND
+        self.Background = Sprite(SURFACES_DICT["title_screen_background"], 1, 1)  # create it as sprite
+
+        # SETUP CURTAIN (FOR WHEN PLAYER SKIPS THIS SCENE)
+        curtain_surface = pg.Surface(NATIVE_RESOLUTION)  # create surf
+        curtain_surface.fill((0, 0, 0))  # black color
+        self.Curtain = Sprite(curtain_surface, 1, 1)  # create it as sprite
+        self.Curtain.alpha = 255  # alpha 0 at start (to fade out)
+
+        # CURTAIN - fade out ANIMATOR
+        self.CurtainFadeAnimator = Animator()  # create animator
+        self.CurtainFadeAnimator.connect("animation_finished", self.on_CurtainFadeAnimator_animation_finished)  # connect finished animation signal
+        # fade in animation
+        self.CurtainFadeAnimator.add_animation(
+            name="fade_in",
+            target=self.Curtain,
+             keyframes=[
+                 (0, 0),
+                 (60, 255),
+                 (120, 255),
+             ],
+            property_name="alpha",
+            is_looping=False,
+            is_interpolate=True
+        )
+        # fade out animation
+        self.CurtainFadeAnimator.add_animation(
+            name="fade_out",
+            target=self.Curtain,
+             keyframes=[
+                 (0, 255),
+                 (60, 255),
+                 (120, 0),
+             ],
+            property_name="alpha",
+            is_looping=False,
+            is_interpolate=True
+        )
+        # autoplay the fade out
+        self.CurtainFadeAnimator.play("fade_out")
+
+        # SETUP LABEL - Prompt
+        prompt_text_surface = FONT.render("press any key", False, (255, 255, 255))  # create surf
+        self.PromptText = Sprite(prompt_text_surface, 1, 1)  # create it as sprite
+        self.PromptText.rect.center = pg.Vector2(HALF_NATIVE_RESOLUTION[0], HALF_NATIVE_RESOLUTION[1] + 4 * ONE_TILE)  # position it
+        self.PromptText.alpha = 0  # alpha 0 at start (to fade in)
+
+        # LABEL ANIMATOR - Prompt
+        self.PromptTextAnimator = Animator()  # create animator
+        # blink animation (0 - half alpha loop)
+        self.PromptTextAnimator.add_animation(
+            name="blink",
+            target=self.PromptText,
+             keyframes=[
+                 (0, 0),
+                 (60, 122),
+                 (120, 0)
+             ],
+            property_name="alpha",
+            is_looping=True,
+            is_interpolate=True
+        )
+        # fade out (100 alpha to 0)
+        self.PromptTextAnimator.add_animation(
+            name="fade_out",
+            target=self.PromptText,
+             keyframes=[
+                 (0, 255),
+                 (60, 0),
+                 (120, 0)
+             ],
+            property_name="alpha",
+            is_looping=False,
+            is_interpolate=True
+        )
+
+        # layers (can do quadtree collision AABB!)
+        self.DrawnLayer = Group()  # for things that needs to be drawn
+        self.UpdateLayer = Group()  # for things that needs to be updated
+
+        # fill draw layers (order matters, top = drawn most bottom)
+        self.DrawnLayer.add(self.Background)
+        self.DrawnLayer.add(self.PromptText)
+        self.DrawnLayer.add(self.Curtain)
+
+        # fill update layers, anything that needs updating goes here
+        self.UpdateLayer.add()
+    
+    ############
+    # CALLBACK #
+    ############
+    def on_CurtainFadeAnimator_animation_finished(self, animation_name):
+        # fade the prompt here
+        if animation_name == "fade_out":
+            self.PromptTextAnimator.play("blink")
+        elif animation_name == "fade_in":
+            # TODO: Go to menu instead of TEST scene
+            SceneManager.change_scene_to(Test())
+    
+    ###########
+    # METHODS #
+    ###########
+    def update(self, delta):
+        """
+        UpdateLayer call its members update func. Update animator
+        """
+        # update UpdateLayer
+        self.UpdateLayer.update(delta)
+        
+        # update animators
+        self.CurtainFadeAnimator.update()
+        self.PromptTextAnimator.update()
+
+        # user pressed a key? blink out the prompt, fade the curtain to black and go to menu
+        for key in Input.key_states:
+            if Input.key_states[key] == True and self.is_skipped == False:
+                self.is_skipped = True
+                self.PromptTextAnimator.stop(True)
+                self.PromptTextAnimator.play("fade_out")
+                self.CurtainFadeAnimator.play("fade_in")
+    
+    def draw(self):
+        """
+        DrawnLayers call its members update func. Order matters
+        """
+        self.DrawnLayer.draw()
+
+
+# FIRST SCENE
+SceneManager.change_scene_to(MadeBySplash())
+
 
 #############
 # MAIN LOOP #
@@ -749,20 +1357,30 @@ while is_running:
             is_running = False
         # update manager
         Input.update(event)
+        # DEBUG TRIGGER
+        is_debug_in_game = Input.is_action_pressed(DEBUG_KEY_IN_GAME)
+        is_debug = Input.is_action_pressed(DEBUG_KEY)
     
     # CLEAR
     NATIVE_SURFACE.fill("blue4")
 
     # UPDATE
-    scene.update(delta)
+    SceneManager.current_scene.update(delta)
+    PauseMenu.update(delta)
 
     # DRAW
-    scene.draw()
+    SceneManager.current_scene.draw()
+    PauseMenu.draw()
 
     # DEBUG
-    # draw on viewport, 2 lines in mid horizontal and mid vertical
-    # pg.draw.line(NATIVE_SURFACE, "red", (167, 0), (167, 320), 2)
-    # pg.draw.line(NATIVE_SURFACE, "red", (0, 90), (335, 90), 2)
+    if is_debug_in_game:
+        # draw on viewport, 2 lines in mid horizontal and mid vertical (FOR GAMEPLAY - HAS WIDE BG)
+        pg.draw.line(NATIVE_SURFACE, "red", (167, 0), (167, 180), 2)
+        pg.draw.line(NATIVE_SURFACE, "red", (0, 89), (320, 89), 2)
+    if is_debug:
+        # (FOR VIEWPORT)
+        pg.draw.line(NATIVE_SURFACE, "red", (159, 0), (159, 180), 2)
+        pg.draw.line(NATIVE_SURFACE, "red", (0, 89), (320, 89), 2)
 
     # BLIT NATIVE TO DISPLAY
     SCALED_NATIVE_SURFACE = pg.transform.scale(NATIVE_SURFACE, DISPLAY_SIZE)
